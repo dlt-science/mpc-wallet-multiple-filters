@@ -10,7 +10,6 @@ import (
 	"crypto/sha1"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math"
 	"math/rand"
 )
@@ -310,28 +309,28 @@ func (c *Cuckoo) delete(needle string) {
 	}
 }
 
-func main() {
-	// Generate a new cuckoo filter with 10 items and a false positive rate of 0.1
-	cf := NewCuckooFilter(10, 0.1)
+// func main() {
+// 	// Generate a new cuckoo filter with 10 items and a false positive rate of 0.1
+// 	cf := NewCuckooFilter(10, 0.1)
 
-	// Insert the "hello" item in the cuckoo filter
-	cf.insert("hello")
+// 	// Insert the "hello" item in the cuckoo filter
+// 	cf.insert("hello")
 
-	// Insert the "world" item in the cuckoo filter
-	cf.insert("world")
+// 	// Insert the "world" item in the cuckoo filter
+// 	cf.insert("world")
 
-	// Validate if the "hello" item is in the cuckoo filter
-	r := cf.lookup("hello")
-	fmt.Printf("hello: %v\n", r)
+// 	// Validate if the "hello" item is in the cuckoo filter
+// 	r := cf.lookup("hello")
+// 	fmt.Printf("hello: %v\n", r)
 
-	// Validate if the "world" item is in the cuckoo filter
-	r = cf.lookup("world")
-	fmt.Printf("world: %v\n", r)
+// 	// Validate if the "world" item is in the cuckoo filter
+// 	r = cf.lookup("world")
+// 	fmt.Printf("world: %v\n", r)
 
-	// Delete the "world" item from the cuckoo filter
-	cf.delete("world")
+// 	// Delete the "world" item from the cuckoo filter
+// 	cf.delete("world")
 
-	// Validate if the "world" item is in the cuckoo filter
-	r = cf.lookup("world")
-	fmt.Printf("world: %v\n", r)
-}
+// 	// Validate if the "world" item is in the cuckoo filter
+// 	r = cf.lookup("world")
+// 	fmt.Printf("world: %v\n", r)
+// }
