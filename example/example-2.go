@@ -1,13 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"cuckoo"
-	"encoding/csv"
-	"encoding/gob"
 	"errors"
 	"fmt"
-	"os"
 	"sync"
 	"time"
 
@@ -42,6 +38,7 @@ func addCryptoAddressToFilter(address string) {
 	mu.Lock()
 	defer mu.Unlock()
 	filter.Insert(address)
+
 }
 
 func checkCryptoAddressInFilter(address string) bool {
@@ -110,44 +107,24 @@ func CMPRefresh(c *cmp.Config, n *test.Network, pl *pool.Pool) (*cmp.Config, err
 	return r.(*cmp.Config), nil
 }
 
-// AppendFilterToMessage appends the cuckoo filter to the given message.
-func AppendFilterToMessage(m []byte, filter *cuckoo.Cuckoo) ([]byte, error) {
-	var buffer bytes.Buffer
-	encoder := gob.NewEncoder(&buffer)
-
-	// Serialize the filter.
-	err := encoder.Encode(filter)
+func combineMessageAndSignature(m []byte, signature *ecdsa.Signature) ([]byte, error) {
+	// 1. Serialize the point R
+	rBytes, err := signature.R.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
 
-	// Append the serialized filter to the message.
-	return append(m, buffer.Bytes()...), nil
-}
-
-// ExtractFilterFromMessage extracts the cuckoo filter from the appended message.
-func ExtractFilterFromMessage(appendedMessage []byte) ([]byte, *cuckoo.Cuckoo, error) {
-	// Assuming the message length is known (originalLength), you can slice the appendedMessage.
-	// If the originalLength is not known, then you'd need another approach, such as appending the length
-	// of the message or the filter at the beginning of the appendedMessage.
-	// For this example, I'm assuming originalLength is not known, so I'm trying to decode from the end until it succeeds.
-
-	buffer := bytes.NewBuffer(appendedMessage)
-	decoder := gob.NewDecoder(buffer)
-	var filter cuckoo.Cuckoo
-
-	// Try decoding from the end until it succeeds. This is not the most efficient method.
-	// A more robust approach would involve storing the lengths of the original message and the filter.
-	for i := len(appendedMessage); i >= 0; i-- {
-		buffer = bytes.NewBuffer(appendedMessage[i:])
-		decoder = gob.NewDecoder(buffer)
-		err := decoder.Decode(&filter)
-		if err == nil {
-			// Decoding succeeded, return the original message and the decoded filter.
-			return appendedMessage[:i], &filter, nil
-		}
+	// 2. Serialize the scalar S
+	sBytes, err := scalarToBytes(signature.S) // This function depends on your library
+	if err != nil {
+		return nil, err
 	}
-	return nil, nil, errors.New("could not decode the cuckoo filter from the message")
+
+	// 3. Concatenate
+	combined := append(rBytes, sBytes...)
+	combined = append(combined, m...)
+
+	return combined, nil
 }
 
 func CMPSign(c *cmp.Config, m []byte, signers party.IDSlice, n *test.Network, pl *pool.Pool) error {
@@ -163,35 +140,32 @@ func CMPSign(c *cmp.Config, m []byte, signers party.IDSlice, n *test.Network, pl
 		fmt.Println("Error:", err)
 		return err
 	}
-	// print filter
-	// fmt.Println("Filter: ", filter)
-
-	// Extract the cuckoo filter and verify
-	// reconstructedFilter, err := extractCuckooFromMessage(m)
-	// if err != nil {
-	// 	fmt.Println("Error:", err)
-	// 	return err
-	// }
-	// fmt.Println("Reconstructed filter: ", reconstructedFilter)
-	// checkCryptoAddressInFilter(cryptoAddress)
 
 	signResult, err := h.Result()
 	if err != nil {
 		return err
 	}
 	signature := signResult.(*ecdsa.Signature)
+
+	// Start timing the verification
+	startTime := time.Now()
+
 	if !signature.Verify(c.PublicPoint(), m) {
 		return errors.New("failed to verify cmp signature")
 	}
 
+	// End timing and calculate elapsed time in microseconds
+	elapsedTime := time.Since(startTime).Microseconds()
+	fmt.Printf("Time taken to verify: %dµs\n", elapsedTime)
+
 	// Update cuckoo filter
-	addCryptoAddressToFilter(cryptoAddress)
-	appendedMessage, err := AppendFilterToMessage(m, filter)
-	if err != nil {
-		fmt.Println("Error appending filter to message:", err)
-		return err
-	}
-	message = appendedMessage
+	// addCryptoAddressToFilter(cryptoAddress)
+	// appendedMessage, err := AppendFilterToMessage(m, filter)
+	// if err != nil {
+	// 	fmt.Println("Error appending filter to message:", err)
+	// 	return err
+	// }
+	// message = appendedMessage
 
 	return nil
 }
@@ -386,27 +360,27 @@ func All(id party.ID, ids party.IDSlice, threshold int, message []byte, n *test.
 func main() {
 	partySets := []party.IDSlice{
 		{"a", "b", "c"},
-		{"a", "b", "c", "d"},
-		{"a", "b", "c", "d", "e"},
-		{"a", "b", "c", "d", "e", "f"},
+		// {"a", "b", "c", "d"},
+		// {"a", "b", "c", "d", "e"},
+		// {"a", "b", "c", "d", "e", "f"},
 	}
 	threshold := 2
 	messageToSign := []byte("hello1")
 	// lookupAddress := []byte("someCryptoAddress")
 
 	// Prepare the CSV file for writing
-	file, err := os.Create("results.csv")
-	if err != nil {
-		fmt.Println("Error creating file:", err)
-		return
-	}
-	defer file.Close()
+	// file, err := os.Create("results.csv")
+	// if err != nil {
+	// 	fmt.Println("Error creating file:", err)
+	// 	return
+	// }
+	// defer file.Close()
 
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
+	// writer := csv.NewWriter(file)
+	// defer writer.Flush()
 
-	// Write CSV header
-	writer.Write([]string{"Party Setup", "Iteration", "Extract Time (µs)", "Lookup Time (µs)", "Combined Time (µs)", "Result"})
+	// // Write CSV header
+	// writer.Write([]string{"Party Setup", "Iteration", "Extract Time (µs)", "Lookup Time (µs)", "Combined Time (µs)", "Result"})
 
 	for _, ids := range partySets {
 		// var totalExtractTime, totalLookupTime
@@ -428,39 +402,39 @@ func main() {
 			}
 			wg.Wait()
 
-			// Measure Extract time
-			startExtract := time.Now()
-			extractedMessage, extractedFilter, err := ExtractFilterFromMessage(message)
-			// print extcated message
-			fmt.Println("Extracted message: ", extractedMessage)
+			// // Measure Extract time
+			// startExtract := time.Now()
+			// extractedMessage, extractedFilter, err := ExtractFilterFromMessage(message)
+			// // print extcated message
+			// fmt.Println("Extracted message: ", extractedMessage)
 
-			endExtract := time.Now()
+			// endExtract := time.Now()
 
-			if err != nil {
-				fmt.Println("Error extracting filter from appended message:", err)
-				return
-			}
+			// if err != nil {
+			// 	fmt.Println("Error extracting filter from appended message:", err)
+			// 	return
+			// }
 
-			// Measure Lookup time
-			startLookup := time.Now()
-			lookupResult := filter.Lookup(lookupAddress) == extractedFilter.Lookup(lookupAddress)
-			endLookup := time.Now()
+			// // Measure Lookup time
+			// // startLookup := time.Now()
+			// // lookupResult := filter.Lookup(lookupAddress) == extractedFilter.Lookup(lookupAddress)
+			// // endLookup := time.Now()
 
-			// Measure Combined time
+			// // // Measure Combined time
 
-			extractTimeMicro := endExtract.Sub(startExtract).Microseconds()
-			lookupTimeMicro := endLookup.Sub(startLookup).Microseconds()
-			combinedTimeMicro := extractTimeMicro + lookupTimeMicro
+			// // extractTimeMicro := endExtract.Sub(startExtract).Microseconds()
+			// // lookupTimeMicro := endLookup.Sub(startLookup).Microseconds()
+			// // combinedTimeMicro := extractTimeMicro + lookupTimeMicro
 
-			// Write results to CSV
-			writer.Write([]string{
-				fmt.Sprint(ids),
-				fmt.Sprint(i + 1),
-				fmt.Sprintf("%.2f", float64(extractTimeMicro)),
-				fmt.Sprintf("%.2f", float64(lookupTimeMicro)),
-				fmt.Sprintf("%.2f", float64(combinedTimeMicro)),
-				fmt.Sprintf("%v", lookupResult),
-			})
+			// // // Write results to CSV
+			// // // writer.Write([]string{
+			// // // 	fmt.Sprint(ids),
+			// // // 	fmt.Sprint(i + 1),
+			// // // 	fmt.Sprintf("%.2f", float64(extractTimeMicro)),
+			// // // 	fmt.Sprintf("%.2f", float64(lookupTimeMicro)),
+			// // // 	fmt.Sprintf("%.2f", float64(combinedTimeMicro)),
+			// // // 	fmt.Sprintf("%v", lookupResult),
+			// // // })
 		}
 		// Print average times to console
 		// fmt.Println("Party Setup:", ids)

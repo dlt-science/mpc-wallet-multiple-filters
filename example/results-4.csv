@@ -1,0 +1,11 @@
+Party Setup,Iteration,Extract Time (µs),Lookup Time (µs),Combined Time (µs),Result
+"a, b, c, d, e, f",1,352.00,1.00,353.00,true
+"a, b, c, d, e, f",2,336.00,1.00,337.00,true
+"a, b, c, d, e, f",3,343.00,1.00,344.00,true
+"a, b, c, d, e, f",4,609.00,1.00,610.00,true
+"a, b, c, d, e, f",5,338.00,2.00,340.00,true
+"a, b, c, d, e, f",6,363.00,2.00,365.00,true
+"a, b, c, d, e, f",7,336.00,1.00,337.00,true
+"a, b, c, d, e, f",8,338.00,2.00,340.00,true
+"a, b, c, d, e, f",9,343.00,1.00,344.00,true
+"a, b, c, d, e, f",10,341.00,1.00,342.00,true

@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+
 	"github.com/bits-and-blooms/bloom/v3"
 )
 
@@ -15,7 +16,7 @@ func main() {
 	bf.Add([]byte("Hello, world!"))
 
 	// Test for existence (false positive)
-	if bf.Test([]byte("Hello, world!")) {
+	if bf.Test([]byte("Hello, orld!")) {
 		fmt.Println("Exists!")
 	}
 }

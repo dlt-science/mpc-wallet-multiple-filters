@@ -3,7 +3,7 @@
 // https://github.com/DylanMeeus/MediumCode/blob/master/cuckoofilter/main.go
 // https://github.com/seiflotfy/cuckoofilter
 
-package main
+package cuckoo
 
 import (
 	"bytes"
@@ -15,8 +15,8 @@ import (
 )
 
 // Define the types
-type fingerprint []byte
-type bucket []fingerprint
+type Bucket []Fingerprint
+type Fingerprint []byte
 
 var hasher = sha1.New()
 
@@ -36,11 +36,11 @@ var b uint = 4 // number of entries or fingerprints per bucket
 
 // Cuckoo Data structure based on https://www.pdl.cmu.edu/PDL-FTP/FS/cuckoo-conext2014.pdf
 type Cuckoo struct {
-	buckets []bucket
-	m       uint // number of buckets
-	b       uint // number of entries per bucket in bits
-	f       uint // fingerprint length in bits
-	n       uint // number of items - filter capacity
+	Buckets []Bucket
+	M       uint // number of buckets
+	B       uint // number of entries per bucket in bits
+	F       uint // fingerprint length in bits
+	N       uint // number of items - filter capacity
 }
 
 // fingerprintLength follows the formula f >= log2(2b/r) bits
@@ -114,20 +114,20 @@ func NewCuckooFilter(n uint, e float64) *Cuckoo {
 
 	// Make an array of buckets of len m
 	// if m = 4, then buckets = [bucket, bucket, bucket, bucket]
-	buckets := make([]bucket, m)
+	buckets := make([]Bucket, m)
 
 	// Initialize each bucket within the array of buckets
 	for i := uint(0); i < m; i++ {
-		buckets[i] = make(bucket, b) // make a bucket of len b
+		buckets[i] = make(Bucket, b) // make a bucket of len b
 	}
 
 	// return the created Cuckoo filter with the parameters
 	return &Cuckoo{
-		buckets: buckets,
-		m:       m,
-		b:       b,
-		f:       f,
-		n:       n,
+		Buckets: buckets,
+		M:       m,
+		B:       b,
+		F:       f,
+		N:       n,
 	}
 
 }
@@ -138,14 +138,14 @@ func NewCuckooFilter(n uint, e float64) *Cuckoo {
 // but we don't want to copy the struct every time we call the function and it is more efficient to pass
 // a pointer to the struct allowing to modify the struct while the other options would pass a copy of the struct
 // the function hashes returns h1, h2 and the fingerprint
-func (c *Cuckoo) hashes(data string) (uint, uint, fingerprint) {
+func (c *Cuckoo) hashes(data string) (uint, uint, Fingerprint) {
 	// Compute the hash of the data string input
 	h := hash([]byte(data))
 
 	// Get the fingerprint of the hash of the data string
 	// using the f value set in the cuckoo filter struct for the fingerprint length in bits
 	// by slicing the hash from 0 to f
-	f := h[0:c.f]
+	f := h[0:c.F]
 
 	// Convert a portion of the first hash value to an unsigned integer using BigEndian
 	i1 := uint(binary.BigEndian.Uint32(h))
@@ -159,7 +159,7 @@ func (c *Cuckoo) hashes(data string) (uint, uint, fingerprint) {
 
 	// i1 and 12 represent the two possible buckets for the item
 	// while f represents the fingerprint of the item to insert, which is a slice of the hash of the item
-	return i1, i2, fingerprint(f)
+	return i1, i2, Fingerprint(f)
 }
 
 func hash(data []byte) []byte {
@@ -176,7 +176,7 @@ func hash(data []byte) []byte {
 }
 
 // nextIndex returns the next index for entry, or an error if the bucket is full
-func (b bucket) nextIndex() (int, error) {
+func (b Bucket) nextIndex() (int, error) {
 	for i, f := range b {
 		if f == nil {
 			return i, nil
@@ -207,7 +207,7 @@ func (b bucket) nextIndex() (int, error) {
 //	    if success -> done
 //
 // The input is a string corresponding to the item to insert in the cuckoo filter
-func (c *Cuckoo) insert(input string) {
+func (c *Cuckoo) Insert(input string) {
 
 	// Get the two possible buckets (i1, i2) for the item and the fingerprint (f) to insert
 	// i1 and i2 only indicate the bucket index in the array of buckets for two possible buckets
@@ -216,7 +216,7 @@ func (c *Cuckoo) insert(input string) {
 	// first try bucket one to find an empty slot by calling the nextIndex function
 	// pick a bucket from the array of buckets using the modulo operator with l1
 	// b1 is a bucket of type []fingerprint
-	b1 := c.buckets[i1%c.m]
+	b1 := c.Buckets[i1%c.M]
 
 	// Get i and err from the nextIndex function ("i, err := b1.nextIndex();")
 	// validating that there is an empty slot in the bucket ("err == nil")
@@ -230,7 +230,7 @@ func (c *Cuckoo) insert(input string) {
 	}
 
 	// then try bucket two to find an empty slot if bucket one is full
-	b2 := c.buckets[i2%c.m]
+	b2 := c.Buckets[i2%c.M]
 	if i, err := b2.nextIndex(); err == nil {
 		b2[i] = f
 
@@ -245,12 +245,12 @@ func (c *Cuckoo) insert(input string) {
 	// Using the retries constant, try to relocate/shuffle items around to make space
 	//for a maximum of retries times
 	for r := 0; r < retries; r++ {
-		index := i % c.m
-		entryIndex := rand.Intn(int(c.b))
+		index := i % c.M
+		entryIndex := rand.Intn(int(c.B))
 		// swap
-		f, c.buckets[index][entryIndex] = c.buckets[index][entryIndex], f
+		f, c.Buckets[index][entryIndex] = c.Buckets[index][entryIndex], f
 		i = i ^ uint(binary.BigEndian.Uint32(hash(f)))
-		b := c.buckets[i%c.m]
+		b := c.Buckets[i%c.M]
 		if idx, err := b.nextIndex(); err == nil {
 			b[idx] = f
 			return
@@ -259,7 +259,7 @@ func (c *Cuckoo) insert(input string) {
 	panic("cuckoo filter full")
 }
 
-func (b bucket) contains(f fingerprint) (int, bool) {
+func (b Bucket) Contains(f Fingerprint) (int, bool) {
 	for i, x := range b {
 		if bytes.Equal(x, f) {
 			return i, true
@@ -269,41 +269,41 @@ func (b bucket) contains(f fingerprint) (int, bool) {
 }
 
 // lookup needle in the cuckoo filter
-func (c *Cuckoo) lookup(needle string) bool {
+func (c *Cuckoo) Lookup(needle string) bool {
 
 	// Get the two possible buckets (i1, i2) for the item and the fingerprint (f) to lookup
 	i1, i2, f := c.hashes(needle)
 
 	// Check if the fingerprint is in the first bucket
-	_, b1 := c.buckets[i1%c.m].contains(f)
+	_, b1 := c.Buckets[i1%c.M].Contains(f)
 
 	// Check if the fingerprint is in the second bucket
-	_, b2 := c.buckets[i2%c.m].contains(f)
+	_, b2 := c.Buckets[i2%c.M].Contains(f)
 
 	// Return true if the fingerprint is in either bucket
 	return b1 || b2
 }
 
 // delete the fingerprint from the cuckoo filter
-func (c *Cuckoo) delete(needle string) {
+func (c *Cuckoo) Delete(needle string) {
 
 	// Get the two possible buckets (i1, i2) for the item and the fingerprint (f) to delete
 	i1, i2, f := c.hashes(needle)
 
 	// try to remove from bucket 1
-	b1 := c.buckets[i1%c.m]
+	b1 := c.Buckets[i1%c.M]
 
 	// if the fingerprint is in the first bucket, set it to nil
-	if ind, ok := b1.contains(f); ok {
+	if ind, ok := b1.Contains(f); ok {
 		b1[ind] = nil
 		return
 	}
 
 	// try to remove from bucket 2
-	b2 := c.buckets[i2%c.m]
+	b2 := c.Buckets[i2%c.M]
 
 	// if the fingerprint is in the second bucket, set it to nil
-	if ind, ok := b2.contains(f); ok {
+	if ind, ok := b2.Contains(f); ok {
 		b2[ind] = nil
 		return
 	}
