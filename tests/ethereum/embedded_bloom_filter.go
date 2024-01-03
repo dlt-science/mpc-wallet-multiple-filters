@@ -1,22 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
-
-	//cuckoofilter "github.com/seiflotfy/cuckoofilter" // for 0.03% false positive rate
-	cuckoofilter "github.com/panmari/cuckoofilter" // for 0.01% false positive rate or 0.0001
-	//cuckoofilter "github.com/irfansharif/cfilter" // flexibility to set false positive rate
-	//"cuckoo" // flexibility to set false positive rate
-
-	//"github.com/seiflotfy/cuckoofilter"
 	"log"
 	"math/big"
 	"os"
@@ -47,14 +42,16 @@ func main() {
 
 	pubKey1, pubKey2, pubKey3 := genPubKeys(PVK_1, PVK_2, PVK_3)
 
-	serializedCuckooFilter := getCuckooFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
+	// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+	serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
+	//serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.03)
 
 	// Connect to the Ethereum client
 	ETH_NODE_URL := os.Getenv("ETH_NODE_URL")
 	if ETH_NODE_URL == "" {
 		// Use Infura's Ethereum Goerly testnet public endpoint as the default
 		// https://www.alchemy.com/chain-connect/chain/goerli
-		ETH_NODE_URL = "https://goerli.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161"
+		ETH_NODE_URL = "https://rpc2.sepolia.org/"
 	}
 
 	client, err := ethclient.Dial(ETH_NODE_URL)
@@ -113,7 +110,7 @@ func main() {
 		Gas:      gasLimit,
 		To:       &toAddress,
 		Value:    amount,
-		Data:     serializedCuckooFilter,
+		Data:     serializedBloomFilter,
 	}
 
 	tx := types.NewTx(txData)
@@ -135,7 +132,7 @@ func main() {
 	fmt.Println("The transaction size in bytes is: ", txSize)
 
 	// Get the gas needed to send the transaction
-	gasNeeded := gasNeeded(fromAddress, toAddress, amount, serializedCuckooFilter, err, client)
+	gasNeeded := gasNeeded(fromAddress, toAddress, amount, serializedBloomFilter, err, client)
 	println("gasNeeded to send the transaction of size ", txSize, " is: ", gasNeeded)
 
 	//// Record the time before sending the transaction
@@ -251,44 +248,57 @@ func genPubKeys(PVK_1 string, PVK_2 string, PVK_3 string) (bytes string, bytes2 
 	return hex.EncodeToString(pubKey1Bytes), hex.EncodeToString(pubKey2Bytes), hex.EncodeToString(pubKey3Bytes)
 }
 
-func getCuckooFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
-	//// Create a new Cuckoo Filter with n items, fp false positive rate and
-	////a default 4 number of entries or fingerprints per bucket
-	////based on the paper https://www.pdl.cmu.edu/PDL-FTP/FS/cuckoo-conext2014.pdf
-	//cf := cuckoo.NewCuckooFilter(n, fp, 4)
+func getBloomFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
 
-	cf := cuckoofilter.NewFilter(n)
+	// Check if n and fp are zero, and if so, assign them default values
+	if n == 0 {
+		n = 3 // default value
+	}
+	if fp == 0 {
+		fp = 0.01 // default value
+	}
+
+	// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+	bf := bloom.NewWithEstimates(n, fp)
 
 	// Add the public keys to the filter
 	if pubKey1 != "" {
-		cf.Insert([]byte(pubKey1))
+		bf.Add([]byte(pubKey1))
 	}
 	if pubKey2 != "" {
-		cf.Insert([]byte(pubKey2))
+		bf.Add([]byte(pubKey2))
 	}
 	if pubKey3 != "" {
-		cf.Insert([]byte(pubKey3))
+		bf.Add([]byte(pubKey3))
 	}
 
-	// Check if the public keys are present in the filter
-	if cf.Lookup([]byte(pubKey1)) {
+	bf.K()
+
+	// print the value fo k
+	fmt.Println(bloom.EstimateParameters(n, fp))
+
+	// Test for existence (false positive)
+	if bf.Test([]byte(pubKey1)) {
 		fmt.Println("pubKey1 Exists!")
 	}
-	if cf.Lookup([]byte(pubKey2)) {
+
+	if bf.Test([]byte(pubKey2)) {
 		fmt.Println("pubKey2 Exists!")
 	}
-	if cf.Lookup([]byte(pubKey3)) {
+
+	if bf.Test([]byte(pubKey3)) {
 		fmt.Println("pubKey3 Exists!")
 	}
 
-	//// Serialize the Cuckoo filter
-	//serializedCuckooFilter, err := cf.Encode()
-	//if err != nil {
-	//	log.Fatalf("Failed to serialize Cuckoo filter: %v", err)
-	//}
+	// Serialize the Bloom filter
+	// Assuming `b` is your bloom filter
+	var buf bytes.Buffer
+	_, err := bf.WriteTo(&buf)
+	if err != nil {
+		log.Fatalf("Error serializing the Bloom filter: %v", err)
+	}
 
-	// Serialize the Cuckoo filter
-	serializedCuckooFilter := cf.Encode()
+	serializedBloomFilter := buf.Bytes()
 
-	return serializedCuckooFilter
+	return serializedBloomFilter
 }
