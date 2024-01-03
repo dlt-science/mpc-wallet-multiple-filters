@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -41,7 +42,9 @@ func main() {
 
 	pubKey1, pubKey2, pubKey3 := genPubKeys(PVK_1, PVK_2, PVK_3)
 
-	serializedBloomFilter := getFilter(pubKey1, pubKey2, pubKey3, 3, 0.01)
+	// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+	serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
+	//serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.03)
 
 	// Connect to the Ethereum client
 	ETH_NODE_URL := os.Getenv("ETH_NODE_URL")
@@ -62,28 +65,44 @@ func main() {
 		log.Fatalf("Failed to load private key: %v", err)
 	}
 
+	// Check the accounts balance
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+	balance, err := client.BalanceAt(context.Background(), fromAddress, nil)
+	if err != nil {
+		log.Fatalf("Failed to get balance: %v", err)
+	}
+	fmt.Printf("Balance: %s\n", balance.String())
+
 	// Recipient address and amount for test transaction
 	toAddress := common.HexToAddress(TO_ADDRESS)
 
 	//// Sent 1 ETH to the recipient address
 	//amount := big.NewInt(1000000000000000000) // 1 ETH
 
-	// Sent 0.01 ETH to the recipient address
-	amount := big.NewInt(10000000000000000) // 0.01 ETH
+	//// Sent 0.01 ETH to the recipient address
+	//amount := big.NewInt(10000000000000000) // 0.01 ETH
+
+	// Sent 0.0001 ETH to the recipient address
+	amount := big.NewInt(100000000000000) // 0.0001 ETH
 
 	// Get the nonce for the account sending the transaction
-	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
 	nonce, err := client.PendingNonceAt(context.Background(), fromAddress)
 	if err != nil {
 		log.Fatalf("Failed to get nonce: %v", err)
 	}
 
 	// Create the transaction
-	gasLimit := uint64(21000) // Gas limit for standard transaction
 	gasPrice, err := client.SuggestGasPrice(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to suggest gas price: %v", err)
 	}
+
+	//// Set the gas limit based on the SuggestGasPrice * (1 + gas buffer)
+	//gasLimit := gasPrice.Mul(gasPrice, big.NewInt(1.2))
+	gasLimit := getGasLimit(gasPrice)
+	println("gasLimit to send transaction with payload: ", gasLimit)
+
+	// Convert the gas limit to an integer 64
 
 	txData := &types.LegacyTx{
 		Nonce:    nonce,
@@ -109,14 +128,86 @@ func main() {
 		log.Fatalf("Failed to sign transaction: %v", err)
 	}
 
-	// Broadcast the transaction
-	err = client.SendTransaction(context.Background(), signedTx)
-	if err != nil {
-		log.Fatalf("Failed to send transaction: %v", err)
+	txSize := getTxSize(err, signedTx)
+	fmt.Println("The transaction size in bytes is: ", txSize)
+
+	// Get the gas needed to send the transaction
+	gasNeeded := gasNeeded(fromAddress, toAddress, amount, serializedBloomFilter, err, client)
+	println("gasNeeded to send the transaction of size ", txSize, " is: ", gasNeeded)
+
+	//// Record the time before sending the transaction
+	//startTime := time.Now()
+	//
+	//// Broadcast the transaction
+	//err = client.SendTransaction(context.Background(), signedTx)
+	//if err != nil {
+	//	log.Fatalf("Failed to send transaction: %v", err)
+	//}
+	//
+	//// Record the time after the transaction is sent
+	//endTime := time.Now()
+	//
+	//fmt.Printf("Transaction sent! TX Hash: %s\n", signedTx.Hash().Hex())
+	//
+	//// Calculate the validation time
+	//validationTime := endTime.Sub(startTime)
+	//
+	//fmt.Println("The validation time is: ", validationTime)
+
+}
+
+func getGasLimit(gasPrice *big.Int) uint64 {
+	/**
+	 * The gas limit is the maximum amount of gas that can be used in a transaction.
+	 * The gas limit is set to 21000 for a simple send transaction.
+	 * The gas limit is set to 53000 for a simple send transaction with a data payload.
+	 */
+
+	// Multiply the gas price by 1.2
+	gasLimitBigFloat := new(big.Float).Mul(new(big.Float).SetInt(gasPrice), big.NewFloat(1.2))
+
+	// Convert the big.Float to a big.Int
+	gasLimitBigInt := new(big.Int)
+	gasLimitBigFloat.Int(gasLimitBigInt)
+
+	// Convert the big.Int to a uint64
+	gasLimit := gasLimitBigInt.Uint64()
+	return gasLimit
+}
+
+func gasNeeded(fromAddress common.Address, toAddress common.Address, amount *big.Int, serializedBloomFilter []byte, err error, client *ethclient.Client) uint64 {
+	// Create a CallMsg
+	callMsg := ethereum.CallMsg{
+		From:     fromAddress,
+		To:       &toAddress,
+		Gas:      0,   // Set to 0 for automatic estimation
+		GasPrice: nil, // Not used for gas estimation
+		Value:    amount,
+		Data:     serializedBloomFilter,
 	}
 
-	fmt.Printf("Transaction sent! TX Hash: %s\n", signedTx.Hash().Hex())
+	// Estimate the gas needed for the transaction
+	gasLimit, err := client.EstimateGas(context.Background(), callMsg)
+	if err != nil {
+		log.Fatalf("Failed to estimate gas: %v", err)
+	}
 
+	fmt.Printf("Estimated gas needed for signed transaction with Payload: %d\n", gasLimit)
+	return gasLimit
+}
+
+func getTxSize(err error, signedTx *types.Transaction) int {
+	// Serialize the transaction
+	data, err := signedTx.MarshalBinary()
+	if err != nil {
+		log.Fatalf("Failed to serialize transaction: %v", err)
+	}
+
+	// Measure the transaction size
+	txSize := len(data)
+	fmt.Printf("Transaction size: %d bytes\n", txSize)
+
+	return txSize
 }
 
 func genPubKeys(PVK_1 string, PVK_2 string, PVK_3 string) (bytes string, bytes2 string, bytes3 string) {
@@ -157,17 +248,7 @@ func genPubKeys(PVK_1 string, PVK_2 string, PVK_3 string) (bytes string, bytes2 
 	return hex.EncodeToString(pubKey1Bytes), hex.EncodeToString(pubKey2Bytes), hex.EncodeToString(pubKey3Bytes)
 }
 
-//func genPrivatePublicKeys() {
-// Generate a new random key pair
-// priv, pub, err := box.GenerateKey(rand.Reader)
-// if err != nil {
-// 	log.Fatal(err)
-// }
-// fmt.Printf("Private Key: %x\n", priv[:])
-// fmt.Printf("Public Key: %x\n", pub[:])
-//}
-
-func getFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
+func getBloomFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
 
 	// Check if n and fp are zero, and if so, assign them default values
 	if n == 0 {
@@ -177,8 +258,8 @@ func getFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float6
 		fp = 0.01 // default value
 	}
 
-	// Create a new Bloom Filter with 1,000,000 items and 0.01% false positive rate
-	bf := bloom.NewWithEstimates(3, 0.01)
+	// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+	bf := bloom.NewWithEstimates(n, fp)
 
 	// Add the public keys to the filter
 	if pubKey1 != "" {
@@ -194,11 +275,19 @@ func getFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float6
 	bf.K()
 
 	// print the value fo k
-	fmt.Println(bloom.EstimateParameters(3, 0.01))
+	fmt.Println(bloom.EstimateParameters(n, fp))
 
 	// Test for existence (false positive)
 	if bf.Test([]byte(pubKey1)) {
-		fmt.Println("Exists!")
+		fmt.Println("pubKey1 Exists!")
+	}
+
+	if bf.Test([]byte(pubKey2)) {
+		fmt.Println("pubKey2 Exists!")
+	}
+
+	if bf.Test([]byte(pubKey3)) {
+		fmt.Println("pubKey3 Exists!")
 	}
 
 	// Serialize the Bloom filter
