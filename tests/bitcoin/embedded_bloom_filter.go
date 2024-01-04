@@ -7,20 +7,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/btcsuite/btcd/btcec/v2"
-	"io/ioutil"
-	"net/http"
-	"strconv"
-
-	//"github.com/btcsuite/btcd/btcutil"
-	//"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/joho/godotenv"
-	cuckoofilter "github.com/panmari/cuckoofilter"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
 )
 
 func main() {
@@ -31,7 +28,7 @@ func main() {
 	}
 
 	// Create a new CSV file
-	file, err := os.Create("BitcoinCuckooResults.csv")
+	file, err := os.Create("BitcoinBloomResults.csv")
 	if err != nil {
 		log.Fatalf("Failed to create CSV file: %v", err)
 	}
@@ -69,7 +66,7 @@ func main() {
 
 		// Generate a Cuckoo filter for the private keys
 		// Generating a filter for total accepted items for a set. E.g. filter of 4 which would have 3 items
-		serializedCuckooFilter := getCuckooFilter(publicKeys, uint(partySet[1]), 0.0001)
+		serializedCuckooFilter := getBloomFilter(publicKeys, uint(partySet[1]), 0.0001)
 
 		// Convert the serializedCuckooFilter to []byte if it's not already in that format
 		serializedCuckooFilterBytes := []byte(serializedCuckooFilter)
@@ -122,6 +119,7 @@ func main() {
 		// set the SignatureScript on the transaction input.
 		msgTx.TxIn[0].SignatureScript = signature
 
+		// Measure the transaction size
 		txSize := getTxSize(msgTx)
 		println("The transaction size is: ", txSize, " bytes")
 
@@ -181,6 +179,60 @@ func generatePublicKeys(privateKeys []string) []string {
 	return publicKeys
 }
 
+func getBloomFilter(publicKeys []string, n uint, fp float64) []byte {
+
+	if n == 0 {
+		n = 3 // default value
+	}
+	if fp == 0 {
+		fp = 0.01 // default value
+	}
+	//Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+	bf := bloom.NewWithEstimates(n, fp)
+
+	for _, pubKey := range publicKeys {
+		pubKeyBytes, _ := hex.DecodeString(pubKey)
+		bf.Add(pubKeyBytes)
+
+		if bf.Test(pubKeyBytes) {
+			fmt.Println(pubKeyBytes, " Exists!")
+		}
+	}
+
+	// Serialize the Bloom filter
+	// Assuming `b` is your bloom filter
+	var buf bytes.Buffer
+	_, err := bf.WriteTo(&buf)
+	if err != nil {
+		log.Fatalf("Error serializing the Bloom filter: %v", err)
+	}
+
+	serializedBloomFilter := buf.Bytes()
+
+	return serializedBloomFilter
+}
+
+func getTxSize(msgTx *wire.MsgTx) int {
+	// Serialize the transaction
+	var buf bytes.Buffer
+	err := msgTx.Serialize(&buf)
+	if err != nil {
+		log.Fatalf("Failed to serialize transaction: %v", err)
+	}
+
+	// Measure the transaction size
+	txSize := len(buf.Bytes())
+	fmt.Printf("Transaction size: %d bytes\n", txSize)
+
+	return txSize
+}
+
+//type FeeInfo struct {
+//	FastestFee  int `json:"fastestFee"`
+//	HalfHourFee int `json:"halfHourFee"`
+//	HourFee     int `json:"hourFee"`
+//}
+
 type FeeInfo struct {
 	FastestFee int `json:"fastestFee"`
 }
@@ -206,6 +258,80 @@ func getCurrentFeeRate() int {
 	// Return the fastest fee rate
 	return feeInfo.FastestFee
 }
+
+//func getCurrentFeeRate() int {
+//	resp, err := http.Get("https://bitcoinfees.earn.com/api/v1/fees/recommended")
+//	if err != nil {
+//		log.Fatalf("Failed to fetch fee rates: %v", err)
+//	}
+//	defer resp.Body.Close()
+//
+//	body, err := ioutil.ReadAll(resp.Body)
+//	if err != nil {
+//		log.Fatalf("Failed to read response body: %v", err)
+//	}
+//
+//	// Print out the response body
+//	fmt.Println("Response body:", string(body))
+//
+//	var feeInfo FeeInfo
+//	err = json.Unmarshal(body, &feeInfo)
+//	if err != nil {
+//		log.Fatalf("Failed to unmarshal JSON: %v", err)
+//	}
+//
+//	// Return the fastest fee rate
+//	return feeInfo.FastestFee
+//}
+
+//
+//	// Add the public keys to the filter
+//	if pubKey1 != "" {
+//		bf.Add([]byte(pubKey1))
+//	}
+//	if pubKey2 != "" {
+//		bf.Add([]byte(pubKey2))
+//	}
+//	if pubKey3 != "" {
+//		bf.Add([]byte(pubKey3))
+//	}
+//
+//	bf.K()
+//
+//	// print the value fo k
+//	fmt.Println(bloom.EstimateParameters(n, fp))
+//
+//	// Test for existence (false positive)
+//	if bf.Test([]byte(pubKey1)) {
+//		fmt.Println("pubKey1 Exists!")
+//	}
+//
+//	if bf.Test([]byte(pubKey2)) {
+//		fmt.Println("pubKey2 Exists!")
+//	}
+//
+//	if bf.Test([]byte(pubKey3)) {
+//		fmt.Println("pubKey3 Exists!")
+//	}
+//
+//	//// Serialize the Bloom filter
+//	//serializedBloomFilter, err := bf.MarshalJSON()
+//	//if err != nil {
+//	//	log.Fatalf("Failed to serialize Bloom filter: %v", err)
+//	//}
+//
+//	// Serialize the Bloom filter
+//	// Assuming `b` is your bloom filter
+//	var buf bytes.Buffer
+//	_, err := bf.WriteTo(&buf)
+//	if err != nil {
+//		log.Fatalf("Error serializing the Bloom filter: %v", err)
+//	}
+//
+//	serializedBloomFilter := buf.Bytes()
+//
+//	//	return serializedBloomFilter
+//}
 
 //func genPubKeys(PVK_1 string, PVK_2 string, PVK_3 string) (bytes string, bytes2 string, bytes3 string) {
 //	// Based on: https://github.com/btcsuite/btcd/blob/master/txscript/example_test.go#L84
@@ -247,80 +373,64 @@ func getCurrentFeeRate() int {
 //
 //	return pubKey1String, pubKey2String, pubKey3String
 //}
-
-func getTxSize(msgTx *wire.MsgTx) int {
-	// Serialize the transaction
-	var buf bytes.Buffer
-	err := msgTx.Serialize(&buf)
-	if err != nil {
-		log.Fatalf("Failed to serialize transaction: %v", err)
-	}
-
-	// Measure the transaction size
-	txSize := len(buf.Bytes())
-	fmt.Printf("Transaction size: %d bytes\n", txSize)
-
-	return txSize
-}
-
-func getCuckooFilter(publicKeys []string, n uint, fp float64) []byte {
-
-	cf := cuckoofilter.NewFilter(n)
-
-	for _, pubKey := range publicKeys {
-		//_, pubKey := btcec.PrivKeyFromBytes([]byte(privateKey))
-		//pubKeyBytes := pubKey.SerializeCompressed()
-		pubKeyBytes, _ := hex.DecodeString(pubKey)
-		cf.Insert(pubKeyBytes)
-
-		if cf.Lookup(pubKeyBytes) {
-			fmt.Println(pubKeyBytes, " Exists!")
-		}
-	}
-
-	serializedCuckooFilter := cf.Encode()
-
-	return serializedCuckooFilter
-}
-
-//func getCuckooFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
-//	//// Create a new Cuckoo Filter with n items, fp false positive rate and
-//	////a default 4 number of entries or fingerprints per bucket
-//	////based on the paper https://www.pdl.cmu.edu/PDL-FTP/FS/cuckoo-conext2014.pdf
-//	//cf := cuckoo.NewCuckooFilter(n, fp, 4)
 //
-//	cf := cuckoofilter.NewFilter(n)
+
+//func getBloomFilter(pubKey1 string, pubKey2 string, pubKey3 string, n uint, fp float64) []byte {
+//	// Check if n and fp are zero, and if so, assign them default values
+//	if n == 0 {
+//		n = 3 // default value
+//	}
+//	if fp == 0 {
+//		fp = 0.01 // default value
+//	}
+//
+//	// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
+//	bf := bloom.NewWithEstimates(n, fp)
 //
 //	// Add the public keys to the filter
 //	if pubKey1 != "" {
-//		cf.Insert([]byte(pubKey1))
+//		bf.Add([]byte(pubKey1))
 //	}
 //	if pubKey2 != "" {
-//		cf.Insert([]byte(pubKey2))
+//		bf.Add([]byte(pubKey2))
 //	}
 //	if pubKey3 != "" {
-//		cf.Insert([]byte(pubKey3))
+//		bf.Add([]byte(pubKey3))
 //	}
 //
-//	// Check if the public keys are present in the filter
-//	if cf.Lookup([]byte(pubKey1)) {
+//	bf.K()
+//
+//	// print the value fo k
+//	fmt.Println(bloom.EstimateParameters(n, fp))
+//
+//	// Test for existence (false positive)
+//	if bf.Test([]byte(pubKey1)) {
 //		fmt.Println("pubKey1 Exists!")
 //	}
-//	if cf.Lookup([]byte(pubKey2)) {
+//
+//	if bf.Test([]byte(pubKey2)) {
 //		fmt.Println("pubKey2 Exists!")
 //	}
-//	if cf.Lookup([]byte(pubKey3)) {
+//
+//	if bf.Test([]byte(pubKey3)) {
 //		fmt.Println("pubKey3 Exists!")
 //	}
 //
-//	//// Serialize the Cuckoo filter
-//	//serializedCuckooFilter, err := cf.Encode()
+//	//// Serialize the Bloom filter
+//	//serializedBloomFilter, err := bf.MarshalJSON()
 //	//if err != nil {
-//	//	log.Fatalf("Failed to serialize Cuckoo filter: %v", err)
+//	//	log.Fatalf("Failed to serialize Bloom filter: %v", err)
 //	//}
 //
-//	// Serialize the Cuckoo filter
-//	serializedCuckooFilter := cf.Encode()
+//	// Serialize the Bloom filter
+//	// Assuming `b` is your bloom filter
+//	var buf bytes.Buffer
+//	_, err := bf.WriteTo(&buf)
+//	if err != nil {
+//		log.Fatalf("Error serializing the Bloom filter: %v", err)
+//	}
 //
-//	return serializedCuckooFilter
+//	serializedBloomFilter := buf.Bytes()
+//
+//	return serializedBloomFilter
 //}
