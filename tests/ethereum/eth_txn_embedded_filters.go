@@ -143,10 +143,10 @@ func main() {
 			publicKeys := generatePublicKeys(privateKeys)
 
 			// Create a new Bloom Filter with 1,000,000 items and 0.001% false positive rate
-			//serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
-			//serializedBloomFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.03)
-			//serializedBloomFilter := getBloomFilter(publicKeys, uint(partySet[1]), 0.0001)
-			serializedBloomFilter := filterFunc(publicKeys, uint(partySet[1]), 0.0001)
+			//serializedFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
+			//serializedFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.03)
+			//serializedFilter := getBloomFilter(publicKeys, uint(partySet[1]), 0.0001)
+			serializedFilter := filterFunc(publicKeys, uint(partySet[1]), 0.0001)
 
 			// Recipient address and amount for test transaction
 			toAddress := common.HexToAddress(ToAddress)
@@ -174,12 +174,12 @@ func main() {
 				Gas:      gasLimit,
 				To:       &toAddress,
 				Value:    amount,
-				Data:     serializedBloomFilter,
+				Data:     serializedFilter,
 			}
 
 			tx := types.NewTx(txData)
 
-			//tx := types.NewTransaction(nonce, toAddress, amount, gasLimit, gasPrice, serializedBloomFilter)
+			//tx := types.NewTransaction(nonce, toAddress, amount, gasLimit, gasPrice, serializedFilter)
 
 			// Sign the transaction
 			signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainID), privateKey)
@@ -191,7 +191,7 @@ func main() {
 			fmt.Println("The transaction size in bytes is: ", txSize)
 
 			// Get the gas needed to send the transaction
-			gasNeededInWei := gasNeeded(fromAddress, toAddress, amount, serializedBloomFilter, err, client)
+			gasNeededInWei := gasNeeded(fromAddress, toAddress, amount, serializedFilter, err, client)
 			println("gasNeeded to send the transaction of size ", txSize, " is: ", gasNeededInWei, " wei")
 
 			// Calculate the transaction fee in ETH
@@ -201,7 +201,7 @@ func main() {
 			// Write the results to the CSV file
 			err = writer.Write([]string{
 				fmt.Sprintf("%d of %d", partySet[0], partySet[1]),
-				strconv.Itoa(len(serializedBloomFilter)),
+				strconv.Itoa(len(serializedFilter)),
 				strconv.Itoa(txSize),
 				fmt.Sprintf("%.16f", txFeeInETH),
 				strconv.Itoa(int(gasNeededInWei)),

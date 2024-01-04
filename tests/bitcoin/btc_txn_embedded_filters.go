@@ -13,6 +13,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/joho/godotenv"
+	cuckoofilter "github.com/panmari/cuckoofilter"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -25,23 +26,6 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatalf("Error loading .env file")
-	}
-
-	// Create a new CSV file
-	file, err := os.Create("BitcoinBloomResults.csv")
-	if err != nil {
-		log.Fatalf("Failed to create CSV file: %v", err)
-	}
-	defer file.Close()
-
-	// Create a new CSV writer
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Write the header row to the CSV file
-	err = writer.Write([]string{"partySet", "filterSize", "transactionSize", "transactionFeeBTC", "transactionFeeSatoshis"})
-	if err != nil {
-		log.Fatalf("Failed to write to CSV file: %v", err)
 	}
 
 	// Define the party sets to test
@@ -57,98 +41,136 @@ func main() {
 	// Fetch the current fee rate from the mempool.space API to calculate the transaction fee
 	feeRate := getCurrentFeeRate()
 
-	for _, partySet := range partySets {
-		// Generate a set of private keys
-		privateKeys := generatePrivateKeys(partySet[0])
+	// Define list of csv documents to be created:
+	type FilterFunc func(publicKeys []string, n uint, fp float64) []byte
 
-		// Generate a set of public keys
-		publicKeys := generatePublicKeys(privateKeys)
+	type FuncFilePair struct {
+		Func FilterFunc
+		File string
+	}
 
-		// Generate a Cuckoo filter for the private keys
-		// Generating a filter for total accepted items for a set. E.g. filter of 4 which would have 3 items
-		serializedCuckooFilter := getBloomFilter(publicKeys, uint(partySet[1]), 0.0001)
+	funcFilePairs := []FuncFilePair{
+		{getBloomFilter, "BitcoinBloomResults.csv"},
+		{getCuckooFilter, "BitcoinCuckooResults.csv"},
+	}
 
-		// Convert the serializedCuckooFilter to []byte if it's not already in that format
-		serializedCuckooFilterBytes := []byte(serializedCuckooFilter)
-		println("The size of the serializedCuckooFilterBytes is: ", len(serializedCuckooFilterBytes), " bytes")
+	for _, pair := range funcFilePairs {
+		fileName := pair.File
+		filterFunc := pair.Func
 
-		// Create a new script builder
-		builder := txscript.NewScriptBuilder()
-
-		// Add the serializedCuckooFilter to the script
-		builder.AddData(serializedCuckooFilterBytes)
-
-		// Get the final script
-		scriptSig, err := builder.Script()
+		// Create a new CSV file
+		file, err := os.Create(fileName)
 		if err != nil {
-			log.Fatalf("Failed to create script: %v", err)
+			log.Fatalf("Failed to create CSV file: %v", err)
 		}
+		defer file.Close()
 
-		println("The size of the scriptSig is: ", len(scriptSig), " bytes")
+		// Create a new CSV writer
+		writer := csv.NewWriter(file)
+		defer writer.Flush()
 
-		// Create a new message transaction
-		msgTx := wire.NewMsgTx(wire.TxVersion)
-
-		// Create a new transaction using the serializedCuckooFilterBytes as a ScriptPubKey
-		// Sending 0.0001 BTC to the address, which equals 10,000 satoshis
-		txOut := wire.NewTxOut(10000, scriptSig)
-
-		// Add the output to the transaction
-		msgTx.AddTxOut(txOut)
-
-		// Format the addresses to send the transaction from and to
-		privKeyBytes, err := hex.DecodeString(os.Getenv("PRIVATE_KEY"))
-		if err != nil {
-			log.Fatalf("Failed to decode private key: %v", err)
-		}
-		privateKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
-
-		// Create a new transaction input
-		prevTxID := wire.NewOutPoint(&chainhash.Hash{}, ^uint32(0)) // replace with your previous transaction ID and index
-		txIn := wire.NewTxIn(prevTxID, nil, nil)
-
-		// Add the input to the transaction
-		msgTx.AddTxIn(txIn)
-
-		// Sign the transaction
-		signature, err := txscript.SignatureScript(msgTx, 0, scriptSig, txscript.SigHashAll, privateKey, false)
-		if err != nil {
-			log.Fatalf("Failed to sign transaction: %v", err)
-		}
-
-		// set the SignatureScript on the transaction input.
-		msgTx.TxIn[0].SignatureScript = signature
-
-		// Measure the transaction size
-		txSize := getTxSize(msgTx)
-		println("The transaction size is: ", txSize, " bytes")
-
-		// Measure the transaction fee
-		txFeeSatoshis := txSize * feeRate
-		println("The transaction fee is: ", txFeeSatoshis, " satoshis")
-
-		//txOutValue := msgTx.TxOut[0].Value
-		//println("The transaction output value is: ", txOutValue, " satoshis")
-
-		// Calculate the transaction fee
-		//txOutValueInBTC := float64(txOutValue) / 100000000
-		//println("The transaction fee is: ", txOutValueInBTC, " BTC")
-
-		txFeeInBTC := float64(txFeeSatoshis) / 100000000
-		println("The transaction fee is: ", txFeeInBTC, " BTC")
-
-		// Write the results to the CSV file
-		err = writer.Write([]string{
-			fmt.Sprintf("%d of %d", partySet[0], partySet[1]),
-			strconv.Itoa(len(serializedCuckooFilterBytes)),
-			strconv.Itoa(txSize),
-			fmt.Sprintf("%.8f", txFeeInBTC),
-			strconv.Itoa(int(txFeeSatoshis)),
-		})
+		// Write the header row to the CSV file
+		err = writer.Write([]string{"partySet", "filterSize", "transactionSize", "transactionFeeBTC", "transactionFeeSatoshis"})
 		if err != nil {
 			log.Fatalf("Failed to write to CSV file: %v", err)
 		}
+
+		for _, partySet := range partySets {
+
+			// Generate a set of private keys
+			privateKeys := generatePrivateKeys(partySet[0])
+
+			// Generate a set of public keys
+			publicKeys := generatePublicKeys(privateKeys)
+
+			// Generate a Cuckoo filter for the private keys
+			// Generating a filter for total accepted items for a set. E.g. filter of 4 which would have 3 items
+			serializedFilterBytes := filterFunc(publicKeys, uint(partySet[1]), 0.0001)
+
+			// Convert the serializedCuckooFilter to []byte if it's not already in that format
+			//serializedFilterBytes := []byte(serializedCuckooFilter)
+			println("The size of the serializedFilterBytes is: ", len(serializedFilterBytes), " bytes")
+
+			// Create a new script builder
+			builder := txscript.NewScriptBuilder()
+
+			// Add the serializedCuckooFilter to the script
+			builder.AddData(serializedFilterBytes)
+
+			// Get the final script
+			scriptSig, err := builder.Script()
+			if err != nil {
+				log.Fatalf("Failed to create script: %v", err)
+			}
+
+			println("The size of the scriptSig is: ", len(scriptSig), " bytes")
+
+			// Create a new message transaction
+			msgTx := wire.NewMsgTx(wire.TxVersion)
+
+			// Create a new transaction using the serializedFilterBytes as a ScriptPubKey
+			// Sending 0.0001 BTC to the address, which equals 10,000 satoshis
+			txOut := wire.NewTxOut(10000, scriptSig)
+
+			// Add the output to the transaction
+			msgTx.AddTxOut(txOut)
+
+			// Format the addresses to send the transaction from and to
+			privKeyBytes, err := hex.DecodeString(os.Getenv("PRIVATE_KEY"))
+			if err != nil {
+				log.Fatalf("Failed to decode private key: %v", err)
+			}
+			privateKey, _ := btcec.PrivKeyFromBytes(privKeyBytes)
+
+			// Create a new transaction input
+			prevTxID := wire.NewOutPoint(&chainhash.Hash{}, ^uint32(0)) // replace with your previous transaction ID and index
+			txIn := wire.NewTxIn(prevTxID, nil, nil)
+
+			// Add the input to the transaction
+			msgTx.AddTxIn(txIn)
+
+			// Sign the transaction
+			signature, err := txscript.SignatureScript(msgTx, 0, scriptSig, txscript.SigHashAll, privateKey, false)
+			if err != nil {
+				log.Fatalf("Failed to sign transaction: %v", err)
+			}
+
+			// set the SignatureScript on the transaction input.
+			msgTx.TxIn[0].SignatureScript = signature
+
+			// Measure the transaction size
+			txSize := getTxSize(msgTx)
+			println("The transaction size is: ", txSize, " bytes")
+
+			// Measure the transaction fee
+			txFeeSatoshis := txSize * feeRate
+			println("The transaction fee is: ", txFeeSatoshis, " satoshis")
+
+			//txOutValue := msgTx.TxOut[0].Value
+			//println("The transaction output value is: ", txOutValue, " satoshis")
+
+			// Calculate the transaction fee
+			//txOutValueInBTC := float64(txOutValue) / 100000000
+			//println("The transaction fee is: ", txOutValueInBTC, " BTC")
+
+			txFeeInBTC := float64(txFeeSatoshis) / 100000000
+			println("The transaction fee is: ", txFeeInBTC, " BTC")
+
+			// Write the results to the CSV file
+			err = writer.Write([]string{
+				fmt.Sprintf("%d of %d", partySet[0], partySet[1]),
+				strconv.Itoa(len(serializedFilterBytes)),
+				strconv.Itoa(txSize),
+				fmt.Sprintf("%.8f", txFeeInBTC),
+				strconv.Itoa(int(txFeeSatoshis)),
+			})
+			if err != nil {
+				log.Fatalf("Failed to write to CSV file: %v", err)
+			}
+		}
+
 	}
+
 }
 
 func generateRandomPrivateKey() string {
@@ -225,6 +247,26 @@ func getTxSize(msgTx *wire.MsgTx) int {
 	fmt.Printf("Transaction size: %d bytes\n", txSize)
 
 	return txSize
+}
+
+func getCuckooFilter(publicKeys []string, n uint, fp float64) []byte {
+
+	cf := cuckoofilter.NewFilter(n)
+
+	for _, pubKey := range publicKeys {
+		//_, pubKey := btcec.PrivKeyFromBytes([]byte(privateKey))
+		//pubKeyBytes := pubKey.SerializeCompressed()
+		pubKeyBytes, _ := hex.DecodeString(pubKey)
+		cf.Insert(pubKeyBytes)
+
+		if cf.Lookup(pubKeyBytes) {
+			fmt.Println(pubKeyBytes, " Exists!")
+		}
+	}
+
+	serializedCuckooFilter := cf.Encode()
+
+	return serializedCuckooFilter
 }
 
 //type FeeInfo struct {
