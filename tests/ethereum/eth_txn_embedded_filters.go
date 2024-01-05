@@ -85,6 +85,7 @@ func main() {
 	fmt.Printf("Balance: %s\n", balance.String())
 
 	// Create the transaction
+	// Gas price in Wei (1 Gwei = 1e9 Wei)
 	gasPrice, err := client.SuggestGasPrice(context.Background())
 	if err != nil {
 		log.Fatalf("Failed to suggest gas price: %v", err)
@@ -129,7 +130,7 @@ func main() {
 		defer writer.Flush()
 
 		// Write the header row to the CSV file
-		err = writer.Write([]string{"partySet", "filterSize", "transactionSize", "transactionFeeETH", "transactionFeeWei"})
+		err = writer.Write([]string{"partySet", "filterSize", "transactionSize", "transactionFeeEther", "transactionFeeWei"})
 		if err != nil {
 			log.Fatalf("Failed to write to CSV file: %v", err)
 		}
@@ -146,7 +147,7 @@ func main() {
 			//serializedFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.0001)
 			//serializedFilter := getBloomFilter(pubKey1, pubKey2, pubKey3, 3, 0.03)
 			//serializedFilter := getBloomFilter(publicKeys, uint(partySet[1]), 0.0001)
-			serializedFilter := filterFunc(publicKeys, uint(partySet[1]), 0.0001)
+			serializedFilter := filterFunc(publicKeys, uint(partySet[0]), 0.0001)
 
 			// Recipient address and amount for test transaction
 			toAddress := common.HexToAddress(ToAddress)
@@ -191,20 +192,20 @@ func main() {
 			fmt.Println("The transaction size in bytes is: ", txSize)
 
 			// Get the gas needed to send the transaction
-			gasNeededInWei := gasNeeded(fromAddress, toAddress, amount, serializedFilter, err, client)
-			println("gasNeeded to send the transaction of size ", txSize, " is: ", gasNeededInWei, " wei")
+			txnGasFeeInWei := gasFeeNeeded(gasPrice.Uint64(), fromAddress, toAddress, amount, serializedFilter, err, client)
+			println("txnGasFeeInWei to send the transaction of size ", txSize, " is: ", txnGasFeeInWei, " wei")
 
 			// Calculate the transaction fee in ETH
-			txFeeInETH := float64(gasNeededInWei) / 1000000000000000000
-			println("The transaction fee is: ", txFeeInETH, " ETH")
+			txnFeeInETH := float64(txnGasFeeInWei) / 1e18
+			println("The transaction fee is: ", txnFeeInETH, " ETHER")
 
 			// Write the results to the CSV file
 			err = writer.Write([]string{
 				fmt.Sprintf("%d of %d", partySet[0], partySet[1]),
 				strconv.Itoa(len(serializedFilter)),
 				strconv.Itoa(txSize),
-				fmt.Sprintf("%.16f", txFeeInETH),
-				strconv.Itoa(int(gasNeededInWei)),
+				fmt.Sprintf("%.16f", txnFeeInETH),
+				strconv.Itoa(int(txnGasFeeInWei)),
 			})
 
 			if err != nil {
@@ -236,7 +237,7 @@ func getGasLimit(gasPrice *big.Int) uint64 {
 	return gasLimit
 }
 
-func gasNeeded(fromAddress common.Address, toAddress common.Address, amount *big.Int, serializedBloomFilter []byte, err error, client *ethclient.Client) uint64 {
+func gasFeeNeeded(gasPrice uint64, fromAddress common.Address, toAddress common.Address, amount *big.Int, serializedBloomFilter []byte, err error, client *ethclient.Client) uint64 {
 	// Create a CallMsg
 	callMsg := ethereum.CallMsg{
 		From:     fromAddress,
@@ -248,13 +249,37 @@ func gasNeeded(fromAddress common.Address, toAddress common.Address, amount *big
 	}
 
 	// Estimate the gas needed for the transaction
-	gasLimit, err := client.EstimateGas(context.Background(), callMsg)
+	gasLimit, err := client.EstimateGas(context.Background(), callMsg) // Gas units E.g. 21200
 	if err != nil {
 		log.Fatalf("Failed to estimate gas: %v", err)
 	}
 
-	fmt.Printf("Estimated gas needed for signed transaction with Payload: %d\n", gasLimit)
-	return gasLimit
+	fmt.Printf("Estimated gas needed (in gas units) for signed transaction with Payload: %d\n", gasLimit)
+
+	//// Example values returned by EstimateGas and SuggestGasPrice
+	//gasNeeded := big.NewInt(21200)               // Gas units
+	//gasPrice := big.NewInt(19080547969)          // Gas price in Wei
+	//
+	//// Calculate the transaction fee in Wei (GasNeeded * GasPrice)
+	//feeInWei := new(big.Int).Mul(gasNeeded, gasPrice)
+
+	//// Convert fee to Ether (divide by 1e18)
+	//feeInEth := new(big.Float).Quo(new(big.Float).SetInt(feeInWei), big.NewFloat(params.Ether))
+
+	// Get the transaction total fee in Wei
+	//gasLimitBigInt := new(big.Int).SetUint64(gasLimit)
+	//gasFeeInWei := new(big.Int).Mul(&gasPrice, gasLimitBigInt)
+	//feeInWei := new(uint64).Mul(gasPrice, gasLimit)
+	feeInWei := gasPrice * gasLimit
+
+	// Print the results
+	println("Transaction Fee in Wei: ", feeInWei)
+	//fmt.Printf("Transaction Fee in Ether: %s\n", feeInEth.Text('f', 18)) // formatted to 18 decimal places
+
+	// Gas fee in Wei
+	//gasFee := gasFeeInWei.Uint64()
+
+	return feeInWei
 }
 
 func getTxSize(err error, signedTx *types.Transaction) int {
