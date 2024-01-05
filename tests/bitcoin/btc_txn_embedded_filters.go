@@ -85,7 +85,7 @@ func main() {
 
 			// Generate a Cuckoo filter for the private keys
 			// Generating a filter for total accepted items for a set. E.g. filter of 4 which would have 3 items
-			serializedFilterBytes := filterFunc(publicKeys, uint(partySet[1]), 0.0001)
+			serializedFilterBytes := filterFunc(publicKeys, uint(partySet[0]), 0.0001)
 
 			// Convert the serializedCuckooFilter to []byte if it's not already in that format
 			//serializedFilterBytes := []byte(serializedCuckooFilter)
